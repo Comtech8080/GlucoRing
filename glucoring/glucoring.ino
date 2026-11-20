@@ -104,34 +104,47 @@ void drawCentered(const String &text, uint8_t size, int16_t y, uint16_t color) {
 }
 
 void drawReading() {
-  unsigned long age = latestReadingMs ? (unsigned long)(millis() - latestReadingMs) : 0;
+  unsigned long now = millis();
+  unsigned long age = latestReadingMs ? (now - latestReadingMs) : 0;
   bool stale = age > 90000;   // CGM updates about once a minute
 
   int cx = gfx->width() / 2;
   int cy = gfx->height() / 2;
 
-  // Color the whole face by glucose status; flash on critical (ultra high / low).
   int ultraHighMgDl = highLimitMgDl + 90;   // 5 mmol/L above the high limit
   bool belowLow = latestValid && !stale && latestGlucose < lowLimitMgDl;
   bool ultraHigh = latestValid && !stale && latestGlucose > ultraHighMgDl;
   bool highOnly = latestValid && !stale && latestGlucose > highLimitMgDl && !ultraHigh;
-  bool flashOn = ((millis() / 600) % 2) == 0;   // ~600 ms blink
+  bool flashOn = ((now / 600) % 2) == 0;   // ~600 ms blink
 
   uint16_t badge;
   if (!latestValid || stale) {
-    badge = gfx->color565(45, 50, 60);          // gray
+    badge = gfx->color565(44, 48, 54);         // slate
   } else if (belowLow || ultraHigh) {
-    badge = flashOn ? gfx->color565(210, 40, 46)   // bright red
-                    : gfx->color565(92, 20, 24);   // dim red
+    badge = flashOn ? gfx->color565(224, 58, 62)  // red
+                    : gfx->color565(96, 24, 28);  // dim red
   } else if (highOnly) {
-    badge = gfx->color565(232, 150, 28);         // amber (high)
+    badge = gfx->color565(240, 156, 26);        // amber
   } else {
-    badge = gfx->color565(24, 158, 96);          // green (in range)
+    badge = gfx->color565(16, 152, 94);         // green
   }
 
-  gfx->fillScreen(gfx->color565(10, 12, 14));                  // near-black edge
-  gfx->fillCircle(cx, cy, 112, gfx->color565(255, 255, 255));  // white ring
-  gfx->fillCircle(cx, cy, 109, badge);                         // colored face
+  // Only redraw when something actually changes (prevents flicker).
+  static uint16_t lastBadge = 0xFFFF;
+  static int lastGlucose = 0x7FFFFFFF;
+  static int lastTrend = 0x7FFFFFFF;
+  static bool lastMmol = false;
+  if (badge == lastBadge && latestGlucose == lastGlucose &&
+      latestTrend == lastTrend && latestMmol == lastMmol) {
+    return;
+  }
+  lastBadge = badge;
+  lastGlucose = latestGlucose;
+  lastTrend = latestTrend;
+  lastMmol = latestMmol;
+
+  gfx->fillCircle(cx, cy, 112, gfx->color565(196, 202, 208));  // bezel ring
+  gfx->fillCircle(cx, cy, 110, badge);                         // face
 
   uint16_t fg = gfx->color565(255, 255, 255);
 
@@ -148,15 +161,18 @@ void drawReading() {
   drawCentered(value, 6, 112, fg);
 
   const char *unitLabel = latestMmol ? "mmol/L" : "mg/dL";
-  drawCentered(unitLabel, 2, 172, fg);
+  drawCentered(unitLabel, 2, 172, gfx->color565(204, 210, 216));
 
-  String status;
-  if (!latestValid)      status = "WAITING";
-  else if (stale)        status = "STALE";
-  else if (belowLow)     status = "LOW";
-  else if (highOnly || ultraHigh) status = "HIGH";
-  else                   status = "LIVE";
-  drawCentered(status, 2, 200, gfx->color565(225, 225, 225));
+  if (!latestValid) {
+    drawCentered("waiting", 2, 200, gfx->color565(204, 210, 216));
+  } else if (stale) {
+    drawCentered("stale", 2, 200, gfx->color565(204, 210, 216));
+  } else if (belowLow) {
+    drawCentered("low", 2, 200, fg);
+  } else if (highOnly || ultraHigh) {
+    drawCentered("high", 2, 200, fg);
+  }
+  // in range: no status label (cleaner)
 }
 
 // BLEScan::start() blocks forever in this library (it never returns even though
@@ -177,11 +193,11 @@ void setup() {
   Serial.println("=== GlucoRing: boot ===");
 
   gfx->begin();
-  gfx->fillScreen(gfx->color565(10, 12, 14));
-  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 112, gfx->color565(255, 255, 255));
-  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 109, gfx->color565(45, 50, 60));
+  gfx->fillScreen(gfx->color565(12, 14, 16));
+  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 112, gfx->color565(196, 202, 208));
+  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 110, gfx->color565(44, 48, 54));
   drawCentered("GlucoRing", 2, 108, gfx->color565(255, 255, 255));
-  drawCentered("waiting...", 2, 140, gfx->color565(210, 210, 210));
+  drawCentered("waiting...", 2, 140, gfx->color565(204, 210, 216));
 
   BLEDevice::init("GlucoRing");
   xTaskCreatePinnedToCore(startScanTask, "bleScan", 8192, NULL, 1, NULL, 0);
