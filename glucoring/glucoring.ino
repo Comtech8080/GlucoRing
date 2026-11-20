@@ -12,13 +12,15 @@ Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);          // RST, rotatio
 
 // ---- GlucoTrail broadcast protocol ----
 // GlucoTrail advertises the latest reading as BLE service data under this UUID.
-// Payload (8 bytes):
+// Payload (12 bytes):
 //   byte 0        version = 0x01
 //   byte 1        flags   (bit 0 = valid, bit 1 = mmol/L if set, else mg/dL)
 //   byte 2..3     glucose mg/dL, uint16 little-endian
 //   byte 4        trend raw, int8 (units of 0.1 mg/dL per minute)
 //   byte 5        quality (0..100)
 //   byte 6..7     sensor minute, uint16 little-endian
+//   byte 8..9     low limit mg/dL, uint16 little-endian
+//   byte 10..11   high limit mg/dL, uint16 little-endian
 const char *GLUCOTRAIL_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 BLEUUID glucoUuid(GLUCOTRAIL_SERVICE_UUID);
 
@@ -29,6 +31,8 @@ volatile int latestQuality = 0;
 volatile int latestSensorMinute = 0;
 volatile bool latestValid = false;
 volatile bool latestMmol = false;
+volatile int lowLimitMgDl = 70;
+volatile int highLimitMgDl = 180;
 volatile unsigned long latestReadingMs = 0;
 
 volatile unsigned long adsSeen = 0;
@@ -76,6 +80,10 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
     latestTrend = (int8_t)data[4];
     latestQuality = (uint8_t)data[5];
     latestSensorMinute = (uint8_t)data[6] | ((uint8_t)data[7] << 8);
+    if (data.length() >= 12) {
+      lowLimitMgDl = (uint8_t)data[8] | ((uint8_t)data[9] << 8);
+      highLimitMgDl = (uint8_t)data[10] | ((uint8_t)data[11] << 8);
+    }
     latestReadingMs = millis();
 
     glucoAdsSeen++;
@@ -103,17 +111,19 @@ void drawReading() {
   int cy = gfx->height() / 2;
 
   // Color the whole face by glucose status; flash on critical (ultra high / low).
-  bool critical = latestValid && !stale &&
-                  (latestGlucose < 70 || latestGlucose > 250);
+  int ultraHighMgDl = highLimitMgDl + 90;   // 5 mmol/L above the high limit
+  bool belowLow = latestValid && !stale && latestGlucose < lowLimitMgDl;
+  bool ultraHigh = latestValid && !stale && latestGlucose > ultraHighMgDl;
+  bool highOnly = latestValid && !stale && latestGlucose > highLimitMgDl && !ultraHigh;
   bool flashOn = ((millis() / 600) % 2) == 0;   // ~600 ms blink
 
   uint16_t badge;
   if (!latestValid || stale) {
     badge = gfx->color565(45, 50, 60);          // gray
-  } else if (critical) {
+  } else if (belowLow || ultraHigh) {
     badge = flashOn ? gfx->color565(210, 40, 46)   // bright red
                     : gfx->color565(92, 20, 24);   // dim red
-  } else if (latestGlucose > 180) {
+  } else if (highOnly) {
     badge = gfx->color565(232, 150, 28);         // amber (high)
   } else {
     badge = gfx->color565(24, 158, 96);          // green (in range)
@@ -143,7 +153,8 @@ void drawReading() {
   String status;
   if (!latestValid)      status = "WAITING";
   else if (stale)        status = "STALE";
-  else if (critical)     status = latestGlucose > 250 ? "HIGH" : "LOW";
+  else if (belowLow)     status = "LOW";
+  else if (highOnly || ultraHigh) status = "HIGH";
   else                   status = "LIVE";
   drawCentered(status, 2, 200, gfx->color565(225, 225, 225));
 }
