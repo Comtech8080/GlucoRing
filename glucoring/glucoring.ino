@@ -56,11 +56,6 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
     svc.replace("-", "");
 
     String data = dev.getServiceData();
-    // Diagnostic: print 128-bit service-data UUIDs so we can see whether the
-    // phone's 4fafc201... UUID is reaching us at all.
-    if (svc.length() >= 32) {
-      Serial.printf("svc %s len=%d\n", svc.c_str(), (int)data.length());
-    }
 
     String expected = String(GLUCOTRAIL_SERVICE_UUID);
     expected.toLowerCase();
@@ -98,6 +93,14 @@ void drawCentered(const String &text, uint8_t size, int16_t y, uint16_t color) {
 }
 
 void drawReading() {
+  static unsigned long lastDbg = 0;
+  unsigned long now = millis();
+  if (now - lastDbg >= 2000) {
+    lastDbg = now;
+    Serial.printf("DRAW valid=%d glu=%d trend=%d\n",
+                  (int)latestValid, latestGlucose, latestTrend);
+  }
+
   gfx->fillScreen(gfx->color565(0, 0, 0));
 
   unsigned long age = latestReadingMs ? (unsigned long)(millis() - latestReadingMs) : 0;
