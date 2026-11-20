@@ -3,7 +3,6 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
-#include <string>
 
 // ---- Display ----
 Arduino_DataBus *bus = new Arduino_ESP32SPI(2, 5, 18, 23, -1);   // DC, CS, SCK, MOSI, MISO
@@ -51,19 +50,18 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
     if (!dev.haveServiceData()) return;
     if (!dev.getServiceDataUUID().equals(glucoUuid)) return;
 
-    std::string data = dev.getServiceData();
+    String data = dev.getServiceData();
     if (data.length() < 8) return;
 
-    const char *p = data.c_str();
-    uint8_t version = (uint8_t)p[0];
+    uint8_t version = (uint8_t)data[0];
     if (version != 0x01) return;
 
-    uint8_t flags = (uint8_t)p[1];
+    uint8_t flags = (uint8_t)data[1];
     latestValid = (flags & 0x01) != 0;
-    latestGlucose = (uint8_t)p[2] | ((uint8_t)p[3] << 8);
-    latestTrend = (int8_t)p[4];
-    latestQuality = (uint8_t)p[5];
-    latestSensorMinute = (uint8_t)p[6] | ((uint8_t)p[7] << 8);
+    latestGlucose = (uint8_t)data[2] | ((uint8_t)data[3] << 8);
+    latestTrend = (int8_t)data[4];
+    latestQuality = (uint8_t)data[5];
+    latestSensorMinute = (uint8_t)data[6] | ((uint8_t)data[7] << 8);
     latestReadingMs = millis();
 
     glucoAdsSeen++;
