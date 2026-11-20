@@ -14,7 +14,7 @@ Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);          // RST, rotatio
 // GlucoTrail advertises the latest reading as BLE service data under this UUID.
 // Payload (8 bytes):
 //   byte 0        version = 0x01
-//   byte 1        flags   (bit 0 = reading valid)
+//   byte 1        flags   (bit 0 = valid, bit 1 = mmol/L if set, else mg/dL)
 //   byte 2..3     glucose mg/dL, uint16 little-endian
 //   byte 4        trend raw, int8 (units of 0.1 mg/dL per minute)
 //   byte 5        quality (0..100)
@@ -28,6 +28,7 @@ volatile int latestTrend = 0;
 volatile int latestQuality = 0;
 volatile int latestSensorMinute = 0;
 volatile bool latestValid = false;
+volatile bool latestMmol = false;
 volatile unsigned long latestReadingMs = 0;
 
 volatile unsigned long adsSeen = 0;
@@ -60,6 +61,7 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
 
     uint8_t flags = (uint8_t)data[1];
     latestValid = (flags & 0x01) != 0;
+    latestMmol = (flags & 0x02) != 0;
     latestGlucose = (uint8_t)data[2] | ((uint8_t)data[3] << 8);
     latestTrend = (int8_t)data[4];
     latestQuality = (uint8_t)data[5];
@@ -107,10 +109,19 @@ void drawReading() {
 
   uint16_t valueColor = gfx->color565(255, 255, 255);
   if (!latestValid || stale) valueColor = gfx->color565(150, 150, 150);
-  String value = (latestValid && !stale) ? String(latestGlucose) : "--";
+
+  String value;
+  if (!latestValid || stale) {
+    value = "--";
+  } else if (latestMmol) {
+    value = String(latestGlucose / 18.0, 1);   // one decimal place
+  } else {
+    value = String(latestGlucose);
+  }
   drawCentered(value, 7, 90, valueColor);
 
-  drawCentered("mg/dL", 2, 160, gfx->color565(180, 180, 180));
+  const char *unitLabel = latestMmol ? "mmol/L" : "mg/dL";
+  drawCentered(unitLabel, 2, 160, gfx->color565(180, 180, 180));
 
   String status;
   if (!latestValid) {
