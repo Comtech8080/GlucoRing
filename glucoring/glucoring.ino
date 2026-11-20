@@ -125,24 +125,40 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("=== GlucoRing: boot ===");
+  Serial.println("S1 serial ok");
 
   gfx->begin();
+  Serial.println("S2 gfx ok");
   gfx->fillScreen(gfx->color565(0, 0, 0));
   drawCentered("GlucoRing", 2, 110, gfx->color565(255, 255, 255));
   drawCentered("waiting...", 2, 140, gfx->color565(150, 150, 150));
+  Serial.println("S3 screen ok");
 
   BLEDevice::init("GlucoRing");
+  Serial.println("S4 ble init ok");
+
   BLEScan *scan = BLEDevice::getScan();
+  Serial.println("S5 getScan ok");
+
   scan->setAdvertisedDeviceCallbacks(new GlucoScanCallbacks());
   scan->setActiveScan(true);
   scan->setInterval(1349);   // 0.625 ms units (~843 ms)
-  scan->setWindow(200);      // ~125 ms window (reduced duty cycle frees the main loop)
-  scan->start(0, false);     // 0 = scan forever
+  scan->setWindow(200);      // ~125 ms window
+  Serial.println("S6 params ok");
+
+  scan->start(0, true);      // 0 = scan forever, isContinue=true (skip stop())
+  Serial.println("S7 start ok");
 
   Serial.println("Scanning for GlucoTrail broadcasts...");
 }
 
 void loop() {
+  static bool firstLoop = true;
+  if (firstLoop) {
+    firstLoop = false;
+    Serial.println("L0 loop started");
+  }
+
   static unsigned long lastBeat = 0;
   static unsigned long lastDraw = 0;
 
