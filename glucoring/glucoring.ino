@@ -48,9 +48,25 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
     adsSeen++;
 
     if (!dev.haveServiceData()) return;
-    if (!dev.getServiceDataUUID().equals(glucoUuid)) return;
+
+    // Normalize the advertised service UUID to lowercase/no-dashes for a robust
+    // string match (avoids library quirks with 128-bit UUID comparison).
+    String svc = dev.getServiceDataUUID().toString();
+    svc.toLowerCase();
+    svc.replace("-", "");
 
     String data = dev.getServiceData();
+    // Diagnostic: print 128-bit service-data UUIDs so we can see whether the
+    // phone's 4fafc201... UUID is reaching us at all.
+    if (svc.length() >= 32) {
+      Serial.printf("svc %s len=%d\n", svc.c_str(), (int)data.length());
+    }
+
+    String expected = String(GLUCOTRAIL_SERVICE_UUID);
+    expected.toLowerCase();
+    expected.replace("-", "");
+
+    if (svc != expected) return;
     if (data.length() < 8) return;
 
     uint8_t version = (uint8_t)data[0];
