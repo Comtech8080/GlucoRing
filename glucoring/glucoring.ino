@@ -3,6 +3,8 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // ---- Display ----
 Arduino_DataBus *bus = new Arduino_ESP32SPI(2, 5, 18, 23, -1);   // DC, CS, SCK, MOSI, MISO
@@ -121,33 +123,30 @@ void drawReading() {
   drawCentered(status, 2, 195, gfx->color565(120, 200, 120));
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("=== GlucoRing: boot ===");
-  Serial.println("S1 serial ok");
-
-  gfx->begin();
-  Serial.println("S2 gfx ok");
-  gfx->fillScreen(gfx->color565(0, 0, 0));
-  drawCentered("GlucoRing", 2, 110, gfx->color565(255, 255, 255));
-  drawCentered("waiting...", 2, 140, gfx->color565(150, 150, 150));
-  Serial.println("S3 screen ok");
-
-  BLEDevice::init("GlucoRing");
-  Serial.println("S4 ble init ok");
-
+// BLEScan::start() blocks forever in this library (it never returns even though
+// the scan runs). Run it in its own FreeRTOS task so the main loop stays free.
+void startScanTask(void *param) {
   BLEScan *scan = BLEDevice::getScan();
-  Serial.println("S5 getScan ok");
-
   scan->setAdvertisedDeviceCallbacks(new GlucoScanCallbacks());
   scan->setActiveScan(true);
   scan->setInterval(1349);   // 0.625 ms units (~843 ms)
   scan->setWindow(200);      // ~125 ms window
-  Serial.println("S6 params ok");
+  scan->start(0, true);      // blocks here forever; the scan itself runs fine
+  vTaskDelete(NULL);         // never reached
+}
 
-  scan->start(0, true);      // 0 = scan forever, isContinue=true (skip stop())
-  Serial.println("S7 start ok");
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+  Serial.println("=== GlucoRing: boot ===");
+
+  gfx->begin();
+  gfx->fillScreen(gfx->color565(0, 0, 0));
+  drawCentered("GlucoRing", 2, 110, gfx->color565(255, 255, 255));
+  drawCentered("waiting...", 2, 140, gfx->color565(150, 150, 150));
+
+  BLEDevice::init("GlucoRing");
+  xTaskCreatePinnedToCore(startScanTask, "bleScan", 8192, NULL, 1, NULL, 0);
 
   Serial.println("Scanning for GlucoTrail broadcasts...");
 }
