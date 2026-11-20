@@ -3,109 +3,155 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#include <string>
 
+// ---- Display ----
 Arduino_DataBus *bus = new Arduino_ESP32SPI(2, 5, 18, 23, -1);   // DC, CS, SCK, MOSI, MISO
 Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);          // RST, rotation, IPS
 
-// Counters (updated from callback)
-volatile unsigned long adsSeen = 0;
-volatile unsigned long aidexSeen = 0;
-volatile unsigned long lastAdMillis = 0;
+// ---- GlucoTrail broadcast protocol ----
+// GlucoTrail advertises the latest reading as BLE service data under this UUID.
+// Payload (8 bytes):
+//   byte 0        version = 0x01
+//   byte 1        flags   (bit 0 = reading valid)
+//   byte 2..3     glucose mg/dL, uint16 little-endian
+//   byte 4        trend raw, int8 (units of 0.1 mg/dL per minute)
+//   byte 5        quality (0..100)
+//   byte 6..7     sensor minute, uint16 little-endian
+const char *GLUCOTRAIL_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+BLEUUID glucoUuid(GLUCOTRAIL_SERVICE_UUID);
 
-class DebugCallbacks : public BLEAdvertisedDeviceCallbacks {
+// ---- Latest reading (updated from the BLE callback) ----
+volatile int latestGlucose = 0;
+volatile int latestTrend = 0;
+volatile int latestQuality = 0;
+volatile int latestSensorMinute = 0;
+volatile bool latestValid = false;
+volatile unsigned long latestReadingMs = 0;
+
+volatile unsigned long adsSeen = 0;
+volatile unsigned long glucoAdsSeen = 0;
+
+// ASCII arrows only: the default GFX font has no Unicode glyphs.
+const char *trendArrow(int trendRaw) {
+  float rate = trendRaw / 10.0f;   // mg/dL per minute
+  if (rate >= 3.0f) return "^^";
+  if (rate >= 2.0f) return "^";
+  if (rate >= 1.0f) return ">";
+  if (rate <= -3.0f) return "vv";
+  if (rate <= -2.0f) return "v";
+  if (rate <= -1.0f) return "<";
+  return "-";
+}
+
+class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice dev) {
     adsSeen++;
-    lastAdMillis = millis();
 
-    Serial.println("=== ADVERTISEMENT ===");
-    Serial.print("  address: ");
-    Serial.println(dev.getAddress().toString().c_str());
-    Serial.print("  rssi:    ");
-    Serial.println(dev.getRSSI());
-    Serial.print("  name:    ");
-    Serial.println(dev.haveName() ? dev.getName().c_str() : "(none)");
-    Serial.print("  type:    ");
-    Serial.println(dev.getAdvType());
+    if (!dev.haveServiceData()) return;
+    if (!dev.getServiceDataUUID().equals(glucoUuid)) return;
 
-    // Manufacturer data (this is where AiDEX lives)
-    if (dev.haveManufacturerData()) {
-      String m = dev.getManufacturerData();
-      Serial.print("  mfg len: ");
-      Serial.println(m.length());
-      Serial.print("  mfg hex: ");
-      for (int i = 0; i < m.length(); i++) {
-        if ((uint8_t)m[i] < 0x10) Serial.print("0");
-        Serial.print((uint8_t)m[i], HEX);
-        Serial.print(" ");
-      }
-      Serial.println();
+    std::string data = dev.getServiceData();
+    if (data.length() < 8) return;
 
-      if (m.length() >= 2 && (uint8_t)m[0] == 0x59 && (uint8_t)m[1] == 0x00) {
-        aidexSeen++;
-        Serial.println("  >>> AIDEX SENSOR (manufacturer 0x0059)");
-      }
-    } else {
-      Serial.println("  mfg data: (none)");
-    }
+    const char *p = data.c_str();
+    uint8_t version = (uint8_t)p[0];
+    if (version != 0x01) return;
 
-    // Service data (sometimes useful)
-    if (dev.haveServiceData()) {
-      Serial.print("  svc UUID: ");
-      Serial.println(dev.getServiceDataUUID().toString().c_str());
-      Serial.print("  svc data: ");
-      String sd = dev.getServiceData();
-      for (int i = 0; i < sd.length(); i++) {
-        if ((uint8_t)sd[i] < 0x10) Serial.print("0");
-        Serial.print((uint8_t)sd[i], HEX);
-        Serial.print(" ");
-      }
-      Serial.println();
-    }
+    uint8_t flags = (uint8_t)p[1];
+    latestValid = (flags & 0x01) != 0;
+    latestGlucose = (uint8_t)p[2] | ((uint8_t)p[3] << 8);
+    latestTrend = (int8_t)p[4];
+    latestQuality = (uint8_t)p[5];
+    latestSensorMinute = (uint8_t)p[6] | ((uint8_t)p[7] << 8);
+    latestReadingMs = millis();
 
-    Serial.println();
+    glucoAdsSeen++;
+
+    Serial.printf(
+        "GlucoTrail: %d mg/dL trend=%d q=%d min=%d valid=%d rssi=%d\n",
+        latestGlucose, latestTrend, latestQuality, latestSensorMinute,
+        latestValid ? 1 : 0, dev.getRSSI());
   }
 };
+
+void drawCentered(const String &text, uint8_t size, int16_t y, uint16_t color) {
+  gfx->setTextColor(color);
+  gfx->setTextSize(size);
+  int16_t w = 6 * size * text.length();
+  gfx->setCursor((gfx->width() - w) / 2, y);
+  gfx->print(text);
+}
+
+void drawReading() {
+  gfx->fillScreen(gfx->color565(0, 0, 0));
+
+  unsigned long age = latestReadingMs ? (unsigned long)(millis() - latestReadingMs) : 0;
+  bool stale = age > 90000;   // CGM updates about once a minute
+
+  uint16_t trendColor = gfx->color565(120, 200, 255);
+  if (latestTrend >= 20) {
+    trendColor = gfx->color565(255, 180, 60);
+  } else if (latestTrend <= -20) {
+    trendColor = gfx->color565(255, 90, 90);
+  }
+  drawCentered(String(trendArrow(latestTrend)), 4, 40, trendColor);
+
+  uint16_t valueColor = gfx->color565(255, 255, 255);
+  if (!latestValid || stale) valueColor = gfx->color565(150, 150, 150);
+  String value = (latestValid && !stale) ? String(latestGlucose) : "--";
+  drawCentered(value, 7, 90, valueColor);
+
+  drawCentered("mg/dL", 2, 160, gfx->color565(180, 180, 180));
+
+  String status;
+  if (!latestValid) {
+    status = "waiting";
+  } else if (stale) {
+    status = "stale " + String(age / 1000) + "s";
+  } else {
+    status = "live";
+  }
+  drawCentered(status, 2, 195, gfx->color565(120, 200, 120));
+}
 
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println();
-  Serial.println("=== AiDEX debug: boot ===");
+  Serial.println("=== GlucoRing: boot ===");
 
   gfx->begin();
   gfx->fillScreen(gfx->color565(0, 0, 0));
-  gfx->setTextColor(gfx->color565(255, 255, 255));
-  gfx->setTextSize(2);
-  gfx->setCursor(20, 110);
-  gfx->print("Debug scan");
+  drawCentered("GlucoRing", 2, 110, gfx->color565(255, 255, 255));
+  drawCentered("waiting...", 2, 140, gfx->color565(150, 150, 150));
 
-  Serial.println("Initializing BLE...");
-  BLEDevice::init("AidexDebug");
-  Serial.println("BLE initialized.");
-
+  BLEDevice::init("GlucoRing");
   BLEScan *scan = BLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(new DebugCallbacks());
-  scan->setActiveScan(true);      // also request scan responses
-  scan->setInterval(1349);        // 0.625 ms units
-  scan->setWindow(1349);          // scan 100% of the time
+  scan->setAdvertisedDeviceCallbacks(new GlucoScanCallbacks());
+  scan->setActiveScan(true);
+  scan->setInterval(1349);   // 0.625 ms units
+  scan->setWindow(1349);     // scan 100% of the time
+  scan->start(0, false);     // 0 = scan forever
 
-  Serial.println("Starting scan...");
-  scan->start(0, false);          // 0 = scan forever
-  Serial.println("Scan started. Waiting for advertisements...");
-  Serial.println();
+  Serial.println("Scanning for GlucoTrail broadcasts...");
 }
 
 void loop() {
-  // Heartbeat every 5 seconds so you can confirm it's still alive
   static unsigned long lastBeat = 0;
+  static unsigned long lastDraw = 0;
+
+  // Refresh the display twice a second so the stale indicator stays honest.
+  if (millis() - lastDraw >= 500) {
+    lastDraw = millis();
+    drawReading();
+  }
+
+  // Heartbeat every 5 seconds so you can confirm it's still alive.
   if (millis() - lastBeat >= 5000) {
     lastBeat = millis();
-    Serial.println("--- heartbeat ---");
-    Serial.printf("  ads seen total: %lu\n", adsSeen);
-    Serial.printf("  aidex ads seen: %lu\n", aidexSeen);
-    Serial.printf("  ms since last ad: %lu\n", lastAdMillis ? (unsigned long)(millis() - lastAdMillis) : 0);
-    Serial.printf("  free heap: %lu\n", (unsigned long)ESP.getFreeHeap());
-    Serial.println();
+    Serial.printf("--- heartbeat: ads=%lu gluco=%lu heap=%lu ---\n",
+                  adsSeen, glucoAdsSeen, (unsigned long)ESP.getFreeHeap());
   }
+
   delay(50);
 }
