@@ -102,13 +102,22 @@ void drawReading() {
   int cx = gfx->width() / 2;
   int cy = gfx->height() / 2;
 
-  // Color the whole face by glucose status.
+  // Color the whole face by glucose status; flash on critical (ultra high / low).
+  bool critical = latestValid && !stale &&
+                  (latestGlucose < 70 || latestGlucose > 250);
+  bool flashOn = ((millis() / 600) % 2) == 0;   // ~600 ms blink
+
   uint16_t badge;
-  if (!latestValid || stale)      badge = gfx->color565(45, 50, 60);   // gray
-  else if (latestGlucose < 70)    badge = gfx->color565(196, 42, 48);  // red (low)
-  else if (latestGlucose > 250)   badge = gfx->color565(196, 42, 48);  // red (very high)
-  else if (latestGlucose > 180)   badge = gfx->color565(232, 150, 28); // amber (high)
-  else                            badge = gfx->color565(24, 158, 96);  // green (in range)
+  if (!latestValid || stale) {
+    badge = gfx->color565(45, 50, 60);          // gray
+  } else if (critical) {
+    badge = flashOn ? gfx->color565(210, 40, 46)   // bright red
+                    : gfx->color565(92, 20, 24);   // dim red
+  } else if (latestGlucose > 180) {
+    badge = gfx->color565(232, 150, 28);         // amber (high)
+  } else {
+    badge = gfx->color565(24, 158, 96);          // green (in range)
+  }
 
   gfx->fillScreen(gfx->color565(10, 12, 14));                  // near-black edge
   gfx->fillCircle(cx, cy, 112, gfx->color565(255, 255, 255));  // white ring
@@ -134,6 +143,7 @@ void drawReading() {
   String status;
   if (!latestValid)      status = "WAITING";
   else if (stale)        status = "STALE";
+  else if (critical)     status = latestGlucose > 250 ? "HIGH" : "LOW";
   else                   status = "LIVE";
   drawCentered(status, 2, 200, gfx->color565(225, 225, 225));
 }
