@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <Arduino_GFX_Library.h>
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -5,26 +6,21 @@
 #include <BLEAdvertisedDevice.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "FreeSansBold24pt7b.h"
 
-// ---- Display ----
-Arduino_DataBus *bus = new Arduino_ESP32SPI(2, 5, 18, 23, -1);   // DC, CS, SCK, MOSI, MISO
-Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);          // RST, rotation, IPS
+// ==================================================
+// GLUCORING - GLUCOSE DISPLAY (BLE + GC9A01 240x240)
+// ==================================================
 
-// ---- GlucoTrail broadcast protocol ----
-// GlucoTrail advertises the latest reading as BLE service data under this UUID.
-// Payload (12 bytes):
-//   byte 0        version = 0x01
-//   byte 1        flags   (bit 0 = valid, bit 1 = mmol/L if set, else mg/dL)
-//   byte 2..3     glucose mg/dL, uint16 little-endian
-//   byte 4        trend raw, int8 (units of 0.1 mg/dL per minute)
-//   byte 5        quality (0..100)
-//   byte 6..7     sensor minute, uint16 little-endian
-//   byte 8..9     low limit mg/dL, uint16 little-endian
-//   byte 10..11   high limit mg/dL, uint16 little-endian
+// DISPLAY PINS
+Arduino_DataBus *bus = new Arduino_ESP32SPI(2, 5, 18, 23, -1);
+Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);
+
+// GlucoTrail broadcast service UUID
 const char *GLUCOTRAIL_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 BLEUUID glucoUuid(GLUCOTRAIL_SERVICE_UUID);
 
-// ---- Latest reading (updated from the BLE callback) ----
+// Latest reading (glucose kept in mg/dL internally)
 volatile int latestGlucose = 0;
 volatile int latestTrend = 0;
 volatile int latestQuality = 0;
@@ -38,32 +34,23 @@ volatile unsigned long latestReadingMs = 0;
 volatile unsigned long adsSeen = 0;
 volatile unsigned long glucoAdsSeen = 0;
 
-// Draw a filled trend arrow (triangle) centered at (cx, cy).
-void drawTrendGlyph(int trendRaw, int cx, int cy, uint16_t color) {
-  float rate = trendRaw / 10.0f;   // mg/dL per minute
-  if (rate >= 3.0f) {              // rapid rise -> double up
-    gfx->fillTriangle(cx - 22, cy + 12, cx - 9, cy + 12, cx - 15, cy - 10, color);
-    gfx->fillTriangle(cx + 9, cy + 12, cx + 22, cy + 12, cx + 15, cy - 10, color);
-  } else if (rate >= 2.0f) {       // rise -> up
-    gfx->fillTriangle(cx - 22, cy + 12, cx + 22, cy + 12, cx, cy - 16, color);
-  } else if (rate >= 1.0f) {       // slight rise -> diagonal up-right
-    gfx->fillTriangle(cx - 20, cy + 12, cx + 12, cy + 12, cx + 12, cy - 20, color);
-  } else if (rate <= -3.0f) {      // rapid fall -> double down
-    gfx->fillTriangle(cx - 22, cy - 12, cx - 9, cy - 12, cx - 15, cy + 10, color);
-    gfx->fillTriangle(cx + 9, cy - 12, cx + 22, cy - 12, cx + 15, cy + 10, color);
-  } else if (rate <= -2.0f) {      // fall -> down
-    gfx->fillTriangle(cx - 22, cy - 12, cx + 22, cy - 12, cx, cy + 16, color);
-  } else if (rate <= -1.0f) {      // slight fall -> diagonal down-right
-    gfx->fillTriangle(cx - 20, cy - 12, cx + 12, cy - 12, cx + 12, cy + 20, color);
-  } else {                         // steady -> horizontal bar
-    gfx->fillRoundRect(cx - 24, cy - 5, 48, 10, 5, color);
-  }
-}
+// COLORS (RGB565)
+#define BLACK       0x0000
+#define WHITE       0xFFFF
+#define GREEN       0x4FEA
+#define DARKGREEN   0x11C3
+#define RED         0xF9C7
+#define DARKRED     0x6002
+#define AMBER       0xFD20
+#define GREY        0xAD55
+
+// ==================================================
+// BLE SCAN CALLBACK
+// ==================================================
 
 class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice dev) {
     adsSeen++;
-
     if (!dev.haveServiceData()) return;
     if (!dev.getServiceDataUUID().equals(glucoUuid)) return;
 
@@ -85,119 +72,209 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
       highLimitMgDl = (uint8_t)data[10] | ((uint8_t)data[11] << 8);
     }
     latestReadingMs = millis();
-
     glucoAdsSeen++;
 
-    Serial.printf(
-        "GlucoTrail: %d mg/dL trend=%d q=%d min=%d valid=%d rssi=%d\n",
-        latestGlucose, latestTrend, latestQuality, latestSensorMinute,
-        latestValid ? 1 : 0, dev.getRSSI());
+    Serial.printf("GlucoTrail: %d mg/dL trend=%d q=%d min=%d valid=%d rssi=%d\n",
+                  latestGlucose, latestTrend, latestQuality, latestSensorMinute,
+                  latestValid ? 1 : 0, dev.getRSSI());
   }
 };
 
-void drawCentered(const String &text, uint8_t size, int16_t y, uint16_t color) {
-  gfx->setTextColor(color);
-  gfx->setTextSize(size);
-  int16_t w = 6 * size * text.length();
-  gfx->setCursor((gfx->width() - w) / 2, y);
-  gfx->print(text);
+// BLEScan::start() blocks forever in this library, so run it in its own task.
+void startScanTask(void *param) {
+  BLEScan *scan = BLEDevice::getScan();
+  scan->setAdvertisedDeviceCallbacks(new GlucoScanCallbacks());
+  scan->setActiveScan(true);
+  scan->setInterval(1349);
+  scan->setWindow(200);
+  scan->start(0, true);
+  vTaskDelete(NULL);
 }
 
-void drawReading() {
-  unsigned long now = millis();
-  unsigned long age = latestReadingMs ? (now - latestReadingMs) : 0;
-  bool stale = age > 90000;   // CGM updates about once a minute
+// ==================================================
+// CENTER TEXT
+// ==================================================
 
-  int cx = gfx->width() / 2;
-  int cy = gfx->height() / 2;
+void drawCenteredText(const String &text, int baselineY, int textSize, uint16_t color, const GFXfont *font = NULL) {
+  gfx->setFont(font);
+  gfx->setTextSize(textSize);
+  gfx->setTextColor(color);
+  gfx->setTextWrap(false);
 
-  int ultraHighMgDl = highLimitMgDl + 90;   // 5 mmol/L above the high limit
-  bool belowLow = latestValid && !stale && latestGlucose < lowLimitMgDl;
-  bool ultraHigh = latestValid && !stale && latestGlucose > ultraHighMgDl;
-  bool highOnly = latestValid && !stale && latestGlucose > highLimitMgDl && !ultraHigh;
-  bool flashOn = ((now / 600) % 2) == 0;   // ~600 ms blink
+  int16_t x1, y1;
+  uint16_t w, h;
+  gfx->getTextBounds(text.c_str(), 0, 0, &x1, &y1, &w, &h);
 
-  uint16_t badge;
-  if (!latestValid || stale) {
-    badge = gfx->color565(44, 48, 54);         // slate
-  } else if (belowLow || ultraHigh) {
-    badge = flashOn ? gfx->color565(224, 58, 62)  // red
-                    : gfx->color565(96, 24, 28);  // dim red
-  } else if (highOnly) {
-    badge = gfx->color565(240, 156, 26);        // amber
-  } else {
-    badge = gfx->color565(16, 152, 94);         // green
+  int x = (240 - w) / 2 - x1;
+  gfx->setCursor(x, baselineY);
+  gfx->print(text);
+
+  gfx->setFont(NULL);
+  gfx->setTextSize(1);
+}
+
+// ==================================================
+// STATE HELPERS
+// ==================================================
+
+bool staleNow() {
+  return latestReadingMs == 0 || (millis() - latestReadingMs > 90000);
+}
+
+bool belowLowNow() {
+  return latestValid && !staleNow() && latestGlucose < lowLimitMgDl;
+}
+
+bool ultraHighNow() {
+  return latestValid && !staleNow() && latestGlucose > highLimitMgDl + 90;
+}
+
+bool highOnlyNow() {
+  return latestValid && !staleNow() && latestGlucose > highLimitMgDl && !ultraHighNow();
+}
+
+bool criticalNow() {
+  return belowLowNow() || ultraHighNow();
+}
+
+// Static status color (no flash) — used by the status badge.
+uint16_t getStatusColor() {
+  if (!latestValid || staleNow()) return GREY;
+  if (criticalNow()) return RED;
+  if (highOnlyNow()) return AMBER;
+  return GREEN;
+}
+
+// Ring color — flashes when critical.
+uint16_t getRingColor() {
+  if (!latestValid || staleNow()) return GREY;
+  if (criticalNow()) {
+    return ((millis() / 600) % 2 == 0) ? RED : DARKRED;
   }
+  if (highOnlyNow()) return AMBER;
+  return GREEN;
+}
 
-  // Only redraw when something actually changes (prevents flicker).
-  static uint16_t lastBadge = 0xFFFF;
-  static int lastGlucose = 0x7FFFFFFF;
-  static int lastTrend = 0x7FFFFFFF;
-  static bool lastMmol = false;
-  if (badge == lastBadge && latestGlucose == lastGlucose &&
-      latestTrend == lastTrend && latestMmol == lastMmol) {
-    return;
+// ==================================================
+// OUTER RING
+// ==================================================
+
+void drawRingColor(uint16_t color) {
+  for (int radius = 117; radius >= 111; radius--) {
+    gfx->drawCircle(120, 120, radius, color);
   }
-  lastBadge = badge;
-  lastGlucose = latestGlucose;
-  lastTrend = latestTrend;
-  lastMmol = latestMmol;
+}
 
-  gfx->fillCircle(cx, cy, 112, gfx->color565(196, 202, 208));  // bezel ring
-  gfx->fillCircle(cx, cy, 110, badge);                         // face
+void drawRing(uint16_t color) {
+  gfx->drawCircle(120, 120, 118, DARKGREEN);
+  drawRingColor(color);
+  gfx->drawCircle(120, 120, 109, DARKGREEN);
+}
 
-  uint16_t fg = gfx->color565(255, 255, 255);
+// ==================================================
+// LARGE GLUCOSE NUMBER
+// ==================================================
 
-  drawTrendGlyph(latestTrend, cx, 76, fg);
+void drawGlucose() {
+  bool stale = staleNow();
 
   String value;
   if (!latestValid || stale) {
     value = "--";
   } else if (latestMmol) {
-    value = String(latestGlucose / 18.0, 1);   // one decimal place
+    value = String(latestGlucose / 18.0, 1);
   } else {
     value = String(latestGlucose);
   }
-  drawCentered(value, 6, 112, fg);
 
-  const char *unitLabel = latestMmol ? "mmol/L" : "mg/dL";
-  drawCentered(unitLabel, 2, 172, gfx->color565(204, 210, 216));
+  const char *unit = latestMmol ? "mmol/L" : "mg/dL";
+
+  gfx->setFont(&FreeSansBold24pt7b);
+  gfx->setTextSize(2);
+
+  int16_t bx, by;
+  uint16_t bw, bh;
+  gfx->getTextBounds(value.c_str(), 0, 0, &bx, &by, &bw, &bh);
+
+  int fontScale = 2;
+  if (bw > 200 || bh > 93) {
+    fontScale = 1;
+  }
+
+  drawCenteredText(value, fontScale == 2 ? 143 : 129, fontScale, WHITE, &FreeSansBold24pt7b);
+  drawCenteredText(unit, 169, 2, GREY);
+}
+
+// ==================================================
+// STATUS BADGE
+// ==================================================
+
+void drawStatus() {
+  String label;
+  uint16_t background;
+  uint16_t border = getStatusColor();
 
   if (!latestValid) {
-    drawCentered("waiting", 2, 200, gfx->color565(204, 210, 216));
-  } else if (stale) {
-    drawCentered("stale", 2, 200, gfx->color565(204, 210, 216));
-  } else if (belowLow) {
-    drawCentered("low", 2, 200, fg);
-  } else if (highOnly || ultraHigh) {
-    drawCentered("high", 2, 200, fg);
+    label = "WAITING";
+    background = BLACK;
+  } else if (staleNow()) {
+    label = "STALE";
+    background = BLACK;
+  } else if (belowLowNow()) {
+    label = "LOW";
+    background = DARKRED;
+  } else if (highOnlyNow() || ultraHighNow()) {
+    label = "HIGH";
+    background = BLACK;
+  } else {
+    label = "IN RANGE";
+    background = DARKGREEN;
   }
-  // in range: no status label (cleaner)
+
+  gfx->fillRoundRect(54, 185, 132, 37, 18, background);
+  gfx->drawRoundRect(54, 185, 132, 37, 18, border);
+
+  if (label == "IN RANGE") {
+    gfx->fillCircle(77, 203, 11, GREEN);
+    gfx->drawLine(71, 203, 76, 208, BLACK);
+    gfx->drawLine(76, 208, 84, 198, BLACK);
+    gfx->setFont(NULL);
+    gfx->setTextSize(1);
+    gfx->setTextColor(WHITE);
+    gfx->setCursor(94, 200);
+    gfx->print("IN RANGE");
+  } else {
+    drawCenteredText(label, 209, 2, WHITE);
+  }
 }
 
-// BLEScan::start() blocks forever in this library (it never returns even though
-// the scan runs). Run it in its own FreeRTOS task so the main loop stays free.
-void startScanTask(void *param) {
-  BLEScan *scan = BLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(new GlucoScanCallbacks());
-  scan->setActiveScan(true);
-  scan->setInterval(1349);   // 0.625 ms units (~843 ms)
-  scan->setWindow(200);      // ~125 ms window
-  scan->start(0, true);      // blocks here forever; the scan itself runs fine
-  vTaskDelete(NULL);         // never reached
+// ==================================================
+// DRAW DISPLAY (full)
+// ==================================================
+
+void drawDisplay() {
+  gfx->fillScreen(BLACK);
+  drawRing(getRingColor());
+  drawCenteredText("GLUCOTRAIL", 42, 2, WHITE);
+  drawGlucose();
+  drawStatus();
 }
+
+// ==================================================
+// SETUP
+// ==================================================
 
 void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("=== GlucoRing: boot ===");
 
-  gfx->begin();
-  gfx->fillScreen(gfx->color565(12, 14, 16));
-  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 112, gfx->color565(196, 202, 208));
-  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 110, gfx->color565(44, 48, 54));
-  drawCentered("GlucoRing", 2, 108, gfx->color565(255, 255, 255));
-  drawCentered("waiting...", 2, 140, gfx->color565(204, 210, 216));
+  if (!gfx->begin()) {
+    Serial.println("Display initialization failed");
+    return;
+  }
+
+  drawDisplay();
 
   BLEDevice::init("GlucoRing");
   xTaskCreatePinnedToCore(startScanTask, "bleScan", 8192, NULL, 1, NULL, 0);
@@ -205,28 +282,52 @@ void setup() {
   Serial.println("Scanning for GlucoTrail broadcasts...");
 }
 
+// ==================================================
+// LOOP
+// ==================================================
+
 void loop() {
-  static bool firstLoop = true;
-  if (firstLoop) {
-    firstLoop = false;
-    Serial.println("L0 loop started");
-  }
-
+  // Heartbeat every 5 seconds.
   static unsigned long lastBeat = 0;
-  static unsigned long lastDraw = 0;
-
-  // Refresh the display twice a second so the stale indicator stays honest.
-  if (millis() - lastDraw >= 500) {
-    lastDraw = millis();
-    drawReading();
-  }
-
-  // Heartbeat every 5 seconds so you can confirm it's still alive.
   if (millis() - lastBeat >= 5000) {
     lastBeat = millis();
     Serial.printf("--- heartbeat: ads=%lu gluco=%lu heap=%lu ---\n",
                   adsSeen, glucoAdsSeen, (unsigned long)ESP.getFreeHeap());
   }
 
-  delay(50);
+  uint16_t ringColor = getRingColor();   // includes the blink phase
+
+  static uint16_t lastRing = 0xFFFF;
+  static int lastGlucose = 0x7FFFFFFF;
+  static bool lastMmol = false;
+  static bool lastValid = false;
+  static bool lastStale = false;
+  static int lastLow = -1;
+  static int lastHigh = -1;
+  static bool first = true;
+
+  bool stale = staleNow();
+  bool dataChanged = first ||
+    latestGlucose != lastGlucose || latestMmol != lastMmol ||
+    latestValid != lastValid || stale != lastStale ||
+    lowLimitMgDl != lastLow || highLimitMgDl != lastHigh;
+
+  if (dataChanged) {
+    first = false;
+    lastGlucose = latestGlucose;
+    lastMmol = latestMmol;
+    lastValid = latestValid;
+    lastStale = stale;
+    lastLow = lowLimitMgDl;
+    lastHigh = highLimitMgDl;
+    lastRing = ringColor;
+    drawDisplay();
+  } else if (ringColor != lastRing) {
+    // Only the blink phase changed — redraw just the ring (no flicker).
+    lastRing = ringColor;
+    drawRingColor(ringColor);
+  }
+
+  delay(100);
 }
+
