@@ -43,6 +43,8 @@ volatile unsigned long glucoAdsSeen = 0;
 #define DARKRED     0x6002
 #define AMBER       0xFD20
 #define GREY        0xAD55
+#define BLUE        0x347E
+#define DARKBLUE    0x114A
 
 // ==================================================
 // BLE SCAN CALLBACK
@@ -137,9 +139,15 @@ bool criticalNow() {
   return belowLowNow() || ultraHighNow();
 }
 
+bool warmupNow() {
+  return !staleNow() && latestSensorMinute >= 0 && latestSensorMinute < 60;
+}
+
 // Static status color (no flash) — used by the status badge.
 uint16_t getStatusColor() {
-  if (!latestValid || staleNow()) return GREY;
+  if (staleNow()) return GREY;
+  if (warmupNow()) return BLUE;
+  if (!latestValid) return GREY;
   if (criticalNow()) return RED;
   if (highOnlyNow()) return AMBER;
   return GREEN;
@@ -147,7 +155,9 @@ uint16_t getStatusColor() {
 
 // Ring color — flashes when critical.
 uint16_t getRingColor() {
-  if (!latestValid || staleNow()) return GREY;
+  if (staleNow()) return GREY;
+  if (warmupNow()) return BLUE;
+  if (!latestValid) return GREY;
   if (criticalNow()) {
     return ((millis() / 600) % 2 == 0) ? RED : DARKRED;
   }
@@ -177,6 +187,14 @@ void drawRing(uint16_t color) {
 
 void drawGlucose() {
   bool stale = staleNow();
+
+  if (warmupNow()) {
+    int remaining = 60 - latestSensorMinute;
+    if (remaining < 0) remaining = 0;
+    drawCenteredText("Warm-up", 138, 1, WHITE, &FreeSansBold24pt7b);
+    drawCenteredText(String(remaining) + " min remaining", 170, 2, GREY);
+    return;
+  }
 
   String value;
   if (!latestValid || stale) {
@@ -214,7 +232,10 @@ void drawStatus() {
   uint16_t background;
   uint16_t border = getStatusColor();
 
-  if (!latestValid) {
+  if (warmupNow()) {
+    label = "WARM-UP";
+    background = DARKBLUE;
+  } else if (!latestValid) {
     label = "WAITING";
     background = BLACK;
   } else if (staleNow()) {
@@ -330,4 +351,3 @@ void loop() {
 
   delay(100);
 }
-
