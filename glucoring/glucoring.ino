@@ -34,16 +34,26 @@ volatile unsigned long latestReadingMs = 0;
 volatile unsigned long adsSeen = 0;
 volatile unsigned long glucoAdsSeen = 0;
 
-// ASCII arrows only: the default GFX font has no Unicode glyphs.
-const char *trendArrow(int trendRaw) {
+// Draw a filled trend arrow (triangle) centered at (cx, cy).
+void drawTrendGlyph(int trendRaw, int cx, int cy, uint16_t color) {
   float rate = trendRaw / 10.0f;   // mg/dL per minute
-  if (rate >= 3.0f) return "^^";
-  if (rate >= 2.0f) return "^";
-  if (rate >= 1.0f) return ">";
-  if (rate <= -3.0f) return "vv";
-  if (rate <= -2.0f) return "v";
-  if (rate <= -1.0f) return "<";
-  return "-";
+  if (rate >= 3.0f) {              // rapid rise -> double up
+    gfx->fillTriangle(cx - 22, cy + 12, cx - 9, cy + 12, cx - 15, cy - 10, color);
+    gfx->fillTriangle(cx + 9, cy + 12, cx + 22, cy + 12, cx + 15, cy - 10, color);
+  } else if (rate >= 2.0f) {       // rise -> up
+    gfx->fillTriangle(cx - 22, cy + 12, cx + 22, cy + 12, cx, cy - 16, color);
+  } else if (rate >= 1.0f) {       // slight rise -> diagonal up-right
+    gfx->fillTriangle(cx - 20, cy + 12, cx + 12, cy + 12, cx + 12, cy - 20, color);
+  } else if (rate <= -3.0f) {      // rapid fall -> double down
+    gfx->fillTriangle(cx - 22, cy - 12, cx - 9, cy - 12, cx - 15, cy + 10, color);
+    gfx->fillTriangle(cx + 9, cy - 12, cx + 22, cy - 12, cx + 15, cy + 10, color);
+  } else if (rate <= -2.0f) {      // fall -> down
+    gfx->fillTriangle(cx - 22, cy - 12, cx + 22, cy - 12, cx, cy + 16, color);
+  } else if (rate <= -1.0f) {      // slight fall -> diagonal down-right
+    gfx->fillTriangle(cx - 20, cy - 12, cx + 12, cy - 12, cx + 12, cy + 20, color);
+  } else {                         // steady -> horizontal bar
+    gfx->fillRoundRect(cx - 24, cy - 5, 48, 10, 5, color);
+  }
 }
 
 class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
@@ -86,29 +96,27 @@ void drawCentered(const String &text, uint8_t size, int16_t y, uint16_t color) {
 }
 
 void drawReading() {
-  static unsigned long lastDbg = 0;
-  unsigned long now = millis();
-  if (now - lastDbg >= 2000) {
-    lastDbg = now;
-    Serial.printf("DRAW valid=%d glu=%d trend=%d\n",
-                  (int)latestValid, latestGlucose, latestTrend);
-  }
-
-  gfx->fillScreen(gfx->color565(0, 0, 0));
-
   unsigned long age = latestReadingMs ? (unsigned long)(millis() - latestReadingMs) : 0;
   bool stale = age > 90000;   // CGM updates about once a minute
 
-  uint16_t trendColor = gfx->color565(120, 200, 255);
-  if (latestTrend >= 20) {
-    trendColor = gfx->color565(255, 180, 60);
-  } else if (latestTrend <= -20) {
-    trendColor = gfx->color565(255, 90, 90);
-  }
-  drawCentered(String(trendArrow(latestTrend)), 4, 40, trendColor);
+  int cx = gfx->width() / 2;
+  int cy = gfx->height() / 2;
 
-  uint16_t valueColor = gfx->color565(255, 255, 255);
-  if (!latestValid || stale) valueColor = gfx->color565(150, 150, 150);
+  // Color the whole face by glucose status.
+  uint16_t badge;
+  if (!latestValid || stale)      badge = gfx->color565(45, 50, 60);   // gray
+  else if (latestGlucose < 70)    badge = gfx->color565(196, 42, 48);  // red (low)
+  else if (latestGlucose > 250)   badge = gfx->color565(196, 42, 48);  // red (very high)
+  else if (latestGlucose > 180)   badge = gfx->color565(232, 150, 28); // amber (high)
+  else                            badge = gfx->color565(24, 158, 96);  // green (in range)
+
+  gfx->fillScreen(gfx->color565(10, 12, 14));                  // near-black edge
+  gfx->fillCircle(cx, cy, 112, gfx->color565(255, 255, 255));  // white ring
+  gfx->fillCircle(cx, cy, 109, badge);                         // colored face
+
+  uint16_t fg = gfx->color565(255, 255, 255);
+
+  drawTrendGlyph(latestTrend, cx, 76, fg);
 
   String value;
   if (!latestValid || stale) {
@@ -118,20 +126,16 @@ void drawReading() {
   } else {
     value = String(latestGlucose);
   }
-  drawCentered(value, 7, 90, valueColor);
+  drawCentered(value, 6, 112, fg);
 
   const char *unitLabel = latestMmol ? "mmol/L" : "mg/dL";
-  drawCentered(unitLabel, 2, 160, gfx->color565(180, 180, 180));
+  drawCentered(unitLabel, 2, 172, fg);
 
   String status;
-  if (!latestValid) {
-    status = "waiting";
-  } else if (stale) {
-    status = "stale " + String(age / 1000) + "s";
-  } else {
-    status = "live";
-  }
-  drawCentered(status, 2, 195, gfx->color565(120, 200, 120));
+  if (!latestValid)      status = "WAITING";
+  else if (stale)        status = "STALE";
+  else                   status = "LIVE";
+  drawCentered(status, 2, 200, gfx->color565(225, 225, 225));
 }
 
 // BLEScan::start() blocks forever in this library (it never returns even though
@@ -152,9 +156,11 @@ void setup() {
   Serial.println("=== GlucoRing: boot ===");
 
   gfx->begin();
-  gfx->fillScreen(gfx->color565(0, 0, 0));
-  drawCentered("GlucoRing", 2, 110, gfx->color565(255, 255, 255));
-  drawCentered("waiting...", 2, 140, gfx->color565(150, 150, 150));
+  gfx->fillScreen(gfx->color565(10, 12, 14));
+  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 112, gfx->color565(255, 255, 255));
+  gfx->fillCircle(gfx->width() / 2, gfx->height() / 2, 109, gfx->color565(45, 50, 60));
+  drawCentered("GlucoRing", 2, 108, gfx->color565(255, 255, 255));
+  drawCentered("waiting...", 2, 140, gfx->color565(210, 210, 210));
 
   BLEDevice::init("GlucoRing");
   xTaskCreatePinnedToCore(startScanTask, "bleScan", 8192, NULL, 1, NULL, 0);
