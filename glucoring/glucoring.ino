@@ -262,7 +262,8 @@ void drawStatus() {
     gfx->setCursor(94, 175);
     gfx->print("IN RANGE");
   } else {
-    drawCenteredText(label, 184, 2, WHITE);
+    // Pill spans y=160..197; 171 puts the size-2 label centered vertically.
+    drawCenteredText(label, 171, 2, WHITE);
   }
 }
 
