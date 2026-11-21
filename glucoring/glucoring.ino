@@ -205,8 +205,6 @@ void drawGlucose() {
     value = String(latestGlucose);
   }
 
-  const char *unit = latestMmol ? "mmol/L" : "mg/dL";
-
   gfx->setFont(&FreeSansBold24pt7b);
   gfx->setTextSize(2);
 
@@ -220,7 +218,6 @@ void drawGlucose() {
   }
 
   drawCenteredText(value, fontScale == 2 ? 143 : 129, fontScale, WHITE, &FreeSansBold24pt7b);
-  drawCenteredText(unit, 169, 2, GREY);
 }
 
 // ==================================================
@@ -252,20 +249,20 @@ void drawStatus() {
     background = DARKGREEN;
   }
 
-  gfx->fillRoundRect(54, 185, 132, 37, 18, background);
-  gfx->drawRoundRect(54, 185, 132, 37, 18, border);
+  gfx->fillRoundRect(54, 160, 132, 37, 18, background);
+  gfx->drawRoundRect(54, 160, 132, 37, 18, border);
 
   if (label == "IN RANGE") {
-    gfx->fillCircle(77, 203, 11, GREEN);
-    gfx->drawLine(71, 203, 76, 208, BLACK);
-    gfx->drawLine(76, 208, 84, 198, BLACK);
+    gfx->fillCircle(77, 178, 11, GREEN);
+    gfx->drawLine(71, 178, 76, 183, BLACK);
+    gfx->drawLine(76, 183, 84, 173, BLACK);
     gfx->setFont(NULL);
     gfx->setTextSize(1);
     gfx->setTextColor(WHITE);
-    gfx->setCursor(94, 200);
+    gfx->setCursor(94, 175);
     gfx->print("IN RANGE");
   } else {
-    drawCenteredText(label, 209, 2, WHITE);
+    drawCenteredText(label, 184, 2, WHITE);
   }
 }
 
