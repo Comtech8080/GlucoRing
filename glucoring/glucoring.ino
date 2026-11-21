@@ -327,6 +327,19 @@ void loop() {
   static bool first = true;
 
   bool stale = staleNow();
+
+  // One-shot console message when the display enters or leaves the stale state.
+  if (stale != lastStale) {
+    if (stale && latestReadingMs != 0) {
+      unsigned long ageMs = millis() - latestReadingMs;
+      Serial.printf(">>> STALE: no broadcast for %lus (last min=%d)\n",
+                    ageMs / 1000UL, latestSensorMinute);
+    } else if (!stale) {
+      Serial.printf(">>> RECOVERED: broadcast received (min=%d)\n",
+                    latestSensorMinute);
+    }
+  }
+
   bool dataChanged = first ||
     latestGlucose != lastGlucose || latestMmol != lastMmol ||
     latestValid != lastValid || stale != lastStale ||
