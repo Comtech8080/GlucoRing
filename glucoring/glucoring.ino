@@ -208,21 +208,50 @@ void drawDownArrow(int x, int y, uint16_t color) {
   gfx->fillTriangle(x - 12, y + 6, x + 12, y + 6, x, y + 20, color);
 }
 
+void drawDiagonalUpArrow(int x, int y, uint16_t color) {
+  // Thick 45° shaft (up-right)
+  for (int i = -2; i <= 2; i++) {
+    gfx->drawLine(x - 14, y + 14 + i, x + 6, y - 6 + i, color);
+  }
+  // Filled head (pointing up-right)
+  gfx->fillTriangle(x + 3, y - 3, x + 16, y - 3, x + 16, y - 16, color);
+}
+
+void drawDiagonalDownArrow(int x, int y, uint16_t color) {
+  // Thick 45° shaft (down-right)
+  for (int i = -2; i <= 2; i++) {
+    gfx->drawLine(x - 14, y - 14 + i, x + 6, y + 6 + i, color);
+  }
+  // Filled head (pointing down-right)
+  gfx->fillTriangle(x + 3, y + 3, x + 16, y + 3, x + 16, y + 16, color);
+}
+
 void drawTrendArrow(int trendRaw, int centerX, int centerY, uint16_t color) {
+  // Matches the app's trend mapping: rate = trendRaw / 10 mg/dL per minute.
   float rate = trendRaw / 10.0f;
 
-  if (rate >= 2.0f) {
-    drawUpArrow(centerX - 24, centerY, color);
-    drawUpArrow(centerX + 24, centerY, color);
-  } else if (rate >= 1.0f) {
+  if (rate >= 3.0f) {
+    // Double up
+    drawUpArrow(centerX - 20, centerY, color);
+    drawUpArrow(centerX + 20, centerY, color);
+  } else if (rate >= 2.0f) {
+    // Up
     drawUpArrow(centerX, centerY, color);
+  } else if (rate >= 1.0f) {
+    // 45° up
+    drawDiagonalUpArrow(centerX, centerY, color);
+  } else if (rate <= -3.0f) {
+    // Double down
+    drawDownArrow(centerX - 20, centerY, color);
+    drawDownArrow(centerX + 20, centerY, color);
   } else if (rate <= -2.0f) {
-    drawDownArrow(centerX - 24, centerY, color);
-    drawDownArrow(centerX + 24, centerY, color);
-  } else if (rate <= -1.0f) {
+    // Down
     drawDownArrow(centerX, centerY, color);
+  } else if (rate <= -1.0f) {
+    // 45° down
+    drawDiagonalDownArrow(centerX, centerY, color);
   } else {
-    // Flat arrow (thick shaft + filled head)
+    // Flat
     gfx->fillRect(centerX - 26, centerY - 3, 52, 7, color);
     gfx->fillTriangle(centerX + 18, centerY - 10, centerX + 18, centerY + 10, centerX + 28, centerY, color);
   }
