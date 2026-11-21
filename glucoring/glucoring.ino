@@ -20,6 +20,10 @@ Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);
 const char *GLUCOTRAIL_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 BLEUUID glucoUuid(GLUCOTRAIL_SERVICE_UUID);
 
+// Restart the scan periodically to release memory the BLE stack leaks per
+// advertisement (otherwise the free heap steadily shrinks until a reset).
+#define SCAN_PERIOD_SECONDS 60
+
 // Latest reading (glucose kept in mg/dL internally)
 volatile int latestGlucose = 0;
 volatile int latestTrend = 0;
@@ -82,14 +86,19 @@ class GlucoScanCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
-// BLEScan::start() blocks forever in this library, so run it in its own task.
+// BLEScan::start() blocks in this library, so run it in its own task. Scan in
+// bounded periods and clear results each cycle so the per-advertisement heap
+// leak in the BLE stack is released instead of accumulating until a reset.
 void startScanTask(void *param) {
   BLEScan *scan = BLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new GlucoScanCallbacks());
   scan->setActiveScan(true);
   scan->setInterval(1349);
   scan->setWindow(200);
-  scan->start(0, true);
+  while (true) {
+    scan->start(SCAN_PERIOD_SECONDS, false);
+    scan->clearResults();
+  }
   vTaskDelete(NULL);
 }
 
@@ -182,6 +191,43 @@ void drawRing(uint16_t color) {
 }
 
 // ==================================================
+// TREND ARROW
+// ==================================================
+
+void drawUpArrow(int x, int y, uint16_t color) {
+  gfx->drawLine(x, y - 7, x, y + 7, color);
+  gfx->drawLine(x - 5, y - 2, x, y - 7, color);
+  gfx->drawLine(x + 5, y - 2, x, y - 7, color);
+}
+
+void drawDownArrow(int x, int y, uint16_t color) {
+  gfx->drawLine(x, y - 7, x, y + 7, color);
+  gfx->drawLine(x - 5, y + 2, x, y + 7, color);
+  gfx->drawLine(x + 5, y + 2, x, y + 7, color);
+}
+
+void drawTrendArrow(int trendRaw, int centerX, int centerY, uint16_t color) {
+  float rate = trendRaw / 10.0f;
+
+  if (rate >= 2.0f) {
+    drawUpArrow(centerX - 9, centerY, color);
+    drawUpArrow(centerX + 9, centerY, color);
+  } else if (rate >= 1.0f) {
+    drawUpArrow(centerX, centerY, color);
+  } else if (rate <= -2.0f) {
+    drawDownArrow(centerX - 9, centerY, color);
+    drawDownArrow(centerX + 9, centerY, color);
+  } else if (rate <= -1.0f) {
+    drawDownArrow(centerX, centerY, color);
+  } else {
+    // Flat arrow
+    gfx->drawLine(centerX - 12, centerY, centerX + 12, centerY, color);
+    gfx->drawLine(centerX + 7, centerY - 4, centerX + 12, centerY, color);
+    gfx->drawLine(centerX + 7, centerY + 4, centerX + 12, centerY, color);
+  }
+}
+
+// ==================================================
 // LARGE GLUCOSE NUMBER
 // ==================================================
 
@@ -218,6 +264,10 @@ void drawGlucose() {
   }
 
   drawCenteredText(value, fontScale == 2 ? 143 : 129, fontScale, WHITE, &FreeSansBold24pt7b);
+
+  if (latestValid && !stale) {
+    drawTrendArrow(latestTrend, 120, 151, WHITE);
+  }
 }
 
 // ==================================================
