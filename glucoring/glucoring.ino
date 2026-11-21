@@ -312,8 +312,10 @@ void loop() {
   static unsigned long lastBeat = 0;
   if (millis() - lastBeat >= 5000) {
     lastBeat = millis();
-    Serial.printf("--- heartbeat: ads=%lu gluco=%lu heap=%lu ---\n",
-                  adsSeen, glucoAdsSeen, (unsigned long)ESP.getFreeHeap());
+    unsigned long ageMs = (latestReadingMs == 0) ? 0 : (millis() - latestReadingMs);
+    Serial.printf("--- heartbeat: ads=%lu gluco=%lu age=%lus stale=%d heap=%lu ---\n",
+                  adsSeen, glucoAdsSeen, ageMs / 1000UL,
+                  staleNow() ? 1 : 0, (unsigned long)ESP.getFreeHeap());
   }
 
   uint16_t ringColor = getRingColor();   // includes the blink phase
