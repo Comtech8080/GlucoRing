@@ -195,35 +195,36 @@ void drawRing(uint16_t color) {
 // ==================================================
 
 void drawUpArrow(int x, int y, uint16_t color) {
-  gfx->drawLine(x, y - 18, x, y + 18, color);
-  gfx->drawLine(x - 11, y - 7, x, y - 18, color);
-  gfx->drawLine(x + 11, y - 7, x, y - 18, color);
+  // Thick shaft
+  gfx->fillRect(x - 3, y - 6, 7, 26, color);
+  // Filled arrowhead (tip up)
+  gfx->fillTriangle(x - 12, y - 6, x + 12, y - 6, x, y - 20, color);
 }
 
 void drawDownArrow(int x, int y, uint16_t color) {
-  gfx->drawLine(x, y - 18, x, y + 18, color);
-  gfx->drawLine(x - 11, y + 7, x, y + 18, color);
-  gfx->drawLine(x + 11, y + 7, x, y + 18, color);
+  // Thick shaft
+  gfx->fillRect(x - 3, y - 20, 7, 26, color);
+  // Filled arrowhead (tip down)
+  gfx->fillTriangle(x - 12, y + 6, x + 12, y + 6, x, y + 20, color);
 }
 
 void drawTrendArrow(int trendRaw, int centerX, int centerY, uint16_t color) {
   float rate = trendRaw / 10.0f;
 
   if (rate >= 2.0f) {
-    drawUpArrow(centerX - 22, centerY, color);
-    drawUpArrow(centerX + 22, centerY, color);
+    drawUpArrow(centerX - 24, centerY, color);
+    drawUpArrow(centerX + 24, centerY, color);
   } else if (rate >= 1.0f) {
     drawUpArrow(centerX, centerY, color);
   } else if (rate <= -2.0f) {
-    drawDownArrow(centerX - 22, centerY, color);
-    drawDownArrow(centerX + 22, centerY, color);
+    drawDownArrow(centerX - 24, centerY, color);
+    drawDownArrow(centerX + 24, centerY, color);
   } else if (rate <= -1.0f) {
     drawDownArrow(centerX, centerY, color);
   } else {
-    // Flat arrow
-    gfx->drawLine(centerX - 26, centerY, centerX + 26, centerY, color);
-    gfx->drawLine(centerX + 17, centerY - 9, centerX + 26, centerY, color);
-    gfx->drawLine(centerX + 17, centerY + 9, centerX + 26, centerY, color);
+    // Flat arrow (thick shaft + filled head)
+    gfx->fillRect(centerX - 26, centerY - 3, 52, 7, color);
+    gfx->fillTriangle(centerX + 18, centerY - 10, centerX + 18, centerY + 10, centerX + 28, centerY, color);
   }
 }
 
@@ -319,9 +320,10 @@ void drawStatus() {
 
 void drawDisplay() {
   gfx->fillScreen(BLACK);
-  drawRing(getRingColor());
+  uint16_t ringColor = getRingColor();
+  drawRing(ringColor);
   if (latestValid && !staleNow() && !warmupNow()) {
-    drawTrendArrow(latestTrend, 120, 52, WHITE);
+    drawTrendArrow(latestTrend, 120, 52, ringColor);
   }
   drawGlucose();
   drawStatus();
