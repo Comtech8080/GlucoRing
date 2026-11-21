@@ -195,35 +195,35 @@ void drawRing(uint16_t color) {
 // ==================================================
 
 void drawUpArrow(int x, int y, uint16_t color) {
-  gfx->drawLine(x, y - 7, x, y + 7, color);
-  gfx->drawLine(x - 5, y - 2, x, y - 7, color);
-  gfx->drawLine(x + 5, y - 2, x, y - 7, color);
+  gfx->drawLine(x, y - 18, x, y + 18, color);
+  gfx->drawLine(x - 11, y - 7, x, y - 18, color);
+  gfx->drawLine(x + 11, y - 7, x, y - 18, color);
 }
 
 void drawDownArrow(int x, int y, uint16_t color) {
-  gfx->drawLine(x, y - 7, x, y + 7, color);
-  gfx->drawLine(x - 5, y + 2, x, y + 7, color);
-  gfx->drawLine(x + 5, y + 2, x, y + 7, color);
+  gfx->drawLine(x, y - 18, x, y + 18, color);
+  gfx->drawLine(x - 11, y + 7, x, y + 18, color);
+  gfx->drawLine(x + 11, y + 7, x, y + 18, color);
 }
 
 void drawTrendArrow(int trendRaw, int centerX, int centerY, uint16_t color) {
   float rate = trendRaw / 10.0f;
 
   if (rate >= 2.0f) {
-    drawUpArrow(centerX - 9, centerY, color);
-    drawUpArrow(centerX + 9, centerY, color);
+    drawUpArrow(centerX - 22, centerY, color);
+    drawUpArrow(centerX + 22, centerY, color);
   } else if (rate >= 1.0f) {
     drawUpArrow(centerX, centerY, color);
   } else if (rate <= -2.0f) {
-    drawDownArrow(centerX - 9, centerY, color);
-    drawDownArrow(centerX + 9, centerY, color);
+    drawDownArrow(centerX - 22, centerY, color);
+    drawDownArrow(centerX + 22, centerY, color);
   } else if (rate <= -1.0f) {
     drawDownArrow(centerX, centerY, color);
   } else {
     // Flat arrow
-    gfx->drawLine(centerX - 12, centerY, centerX + 12, centerY, color);
-    gfx->drawLine(centerX + 7, centerY - 4, centerX + 12, centerY, color);
-    gfx->drawLine(centerX + 7, centerY + 4, centerX + 12, centerY, color);
+    gfx->drawLine(centerX - 26, centerY, centerX + 26, centerY, color);
+    gfx->drawLine(centerX + 17, centerY - 9, centerX + 26, centerY, color);
+    gfx->drawLine(centerX + 17, centerY + 9, centerX + 26, centerY, color);
   }
 }
 
@@ -264,10 +264,6 @@ void drawGlucose() {
   }
 
   drawCenteredText(value, fontScale == 2 ? 143 : 129, fontScale, WHITE, &FreeSansBold24pt7b);
-
-  if (latestValid && !stale) {
-    drawTrendArrow(latestTrend, 120, 151, WHITE);
-  }
 }
 
 // ==================================================
@@ -324,7 +320,9 @@ void drawStatus() {
 void drawDisplay() {
   gfx->fillScreen(BLACK);
   drawRing(getRingColor());
-  drawCenteredText("GLUCOTRAIL", 42, 2, WHITE);
+  if (latestValid && !staleNow() && !warmupNow()) {
+    drawTrendArrow(latestTrend, 120, 52, WHITE);
+  }
   drawGlucose();
   drawStatus();
 }
