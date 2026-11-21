@@ -379,13 +379,17 @@ void loop() {
 
   bool stale = staleNow();
 
-  // One-shot console message when the display enters or leaves the stale state.
+  // One-shot console message and display power when the stale state changes.
   if (stale != lastStale) {
     if (stale && latestReadingMs != 0) {
+      // Lost the connection after having data — blank the screen.
+      gfx->displayOff();
       unsigned long ageMs = millis() - latestReadingMs;
       Serial.printf(">>> STALE: no broadcast for %lus (last min=%d)\n",
                     ageMs / 1000UL, latestSensorMinute);
     } else if (!stale) {
+      // Reconnected — turn the screen back on.
+      gfx->displayOn();
       Serial.printf(">>> RECOVERED: broadcast received (min=%d)\n",
                     latestSensorMinute);
     }
